@@ -667,45 +667,6 @@ function showCreateWorkflowSuccessToast(id?: string) {
 					:workflow-permissions="workflowPermissions"
 				/>
 			</span>
-			<EnterpriseEdition :features="[EnterpriseEditionFeature.Sharing]">
-				<div :class="$style.group">
-					<CollaborationPane v-if="!isNewWorkflow" />
-					<N8nButton
-						type="secondary"
-						data-test-id="workflow-share-button"
-						@click="onShareButtonClick"
-					>
-						{{ $locale.baseText('workflowDetails.share') }}
-					</N8nButton>
-				</div>
-				<template #fallback>
-					<N8nTooltip>
-						<N8nButton type="secondary" :class="['mr-2xs', $style.disabledShareButton]">
-							{{ $locale.baseText('workflowDetails.share') }}
-						</N8nButton>
-						<template #content>
-							<i18n-t
-								:keypath="
-									uiStore.contextBasedTranslationKeys.workflows.sharing.unavailable.description
-										.tooltip
-								"
-								tag="span"
-							>
-								<template #action>
-									<a @click="goToUpgrade">
-										{{
-											$locale.baseText(
-												uiStore.contextBasedTranslationKeys.workflows.sharing.unavailable
-													.button as BaseTextKey,
-											)
-										}}
-									</a>
-								</template>
-							</i18n-t>
-						</template>
-					</N8nTooltip>
-				</template>
-			</EnterpriseEdition>
 			<div :class="$style.group">
 				<SaveButton
 					type="primary"

@@ -291,14 +291,6 @@ const checkWidthAndAdjustSidebar = async (width: number) => {
 			[$style.sideMenuCollapsed]: isCollapsed,
 		}"
 	>
-		<div
-			id="collapse-change-button"
-			:class="['clickable', $style.sideMenuCollapseButton]"
-			@click="toggleCollapse"
-		>
-			<n8n-icon v-if="isCollapsed" icon="chevron-right" size="xsmall" class="ml-5xs" />
-			<n8n-icon v-else icon="chevron-left" size="xsmall" class="mr-5xs" />
-		</div>
 		<n8n-menu :items="mainMenuItems" :collapsed="isCollapsed" @select="handleSelect">
 			<template #header>
 				<div :class="$style.logo">
@@ -312,11 +304,13 @@ const checkWidthAndAdjustSidebar = async (width: number) => {
 
 			<template #beforeLowerMenu>
 				<BecomeTemplateCreatorCta v-if="fullyExpanded && !userIsTrialing" />
-			</template>
-			<template #menuSuffix>
+				<ExecutionsUsage
+					v-if="fullyExpanded && userIsTrialing"
+					:cloud-plan-data="currentPlanAndUsageData"
+			/></template>
+			<template v-if="disableMenusInWF" #menuSuffix>
 				<div>
 					<div
-						v-if="hasVersionUpdates"
 						data-test-id="version-updates-panel-button"
 						:class="$style.updates"
 						@click="openUpdatesPanel"
@@ -336,8 +330,8 @@ const checkWidthAndAdjustSidebar = async (width: number) => {
 					<MainSidebarSourceControl :is-collapsed="isCollapsed" />
 				</div>
 			</template>
-			<template v-if="showUserArea" #footer>
-				<div ref="user" :class="$style.userArea">
+			<template v-if="disableMenusInWF" #footer>
+				<div :class="$style.userArea">
 					<div class="ml-3xs" data-test-id="main-sidebar-user-menu">
 						<!-- This dropdown is only enabled when sidebar is collapsed -->
 						<el-dropdown placement="right-end" trigger="click" @command="onUserActionToggle">
@@ -380,6 +374,303 @@ const checkWidthAndAdjustSidebar = async (width: number) => {
 		</n8n-menu>
 	</div>
 </template>
+
+<script lang="ts">
+import type { CloudPlanAndUsageData, IExecutionResponse, IMenuItem, IVersion } from '@/Interface';
+import GiftNotificationIcon from './GiftNotificationIcon.vue';
+
+import { useMessage } from '@/composables/useMessage';
+import { ABOUT_MODAL_KEY, VERSIONS_MODAL_KEY, VIEWS } from '@/constants';
+import { userHelpers } from '@/mixins/userHelpers';
+import { defineComponent } from 'vue';
+import { mapStores } from 'pinia';
+import { useCloudPlanStore } from '@/stores/cloudPlan.store';
+import { useRootStore } from '@/stores/n8nRoot.store';
+import { useSettingsStore } from '@/stores/settings.store';
+import { useSourceControlStore } from '@/stores/sourceControl.store';
+import { useUIStore } from '@/stores/ui.store';
+import { useUsersStore } from '@/stores/users.store';
+import { useVersionsStore } from '@/stores/versions.store';
+import { useWorkflowsStore } from '@/stores/workflows.store';
+import { useTemplatesStore } from '@/stores/templates.store';
+import ExecutionsUsage from '@/components/executions/ExecutionsUsage.vue';
+import BecomeTemplateCreatorCta from '@/components/BecomeTemplateCreatorCta/BecomeTemplateCreatorCta.vue';
+import MainSidebarSourceControl from '@/components/MainSidebarSourceControl.vue';
+import { hasPermission } from '@/rbac/permissions';
+import { useExternalHooks } from '@/composables/useExternalHooks';
+import { useDebounce } from '@/composables/useDebounce';
+import { useBecomeTemplateCreatorStore } from '@/components/BecomeTemplateCreatorCta/becomeTemplateCreatorStore';
+
+export default defineComponent({
+	name: 'MainSidebar',
+	components: {
+		GiftNotificationIcon,
+		ExecutionsUsage,
+		MainSidebarSourceControl,
+		BecomeTemplateCreatorCta,
+	},
+	mixins: [userHelpers],
+	setup(props, ctx) {
+		const externalHooks = useExternalHooks();
+		const { callDebounced } = useDebounce();
+
+		return {
+			externalHooks,
+			callDebounced,
+			...useMessage(),
+		};
+	},
+	data() {
+		return {
+			basePath: '',
+			fullyExpanded: false,
+			disableMenusInWF: false
+		};
+	},
+	computed: {
+		...mapStores(
+			useRootStore,
+			useSettingsStore,
+			useUIStore,
+			useUsersStore,
+			useVersionsStore,
+			useWorkflowsStore,
+			useCloudPlanStore,
+			useSourceControlStore,
+			useBecomeTemplateCreatorStore,
+			useTemplatesStore,
+		),
+		logoPath(): string {
+			return this.basePath + (this.isCollapsed ? 'static/logo/collapsed.svg' : this.uiStore.logo);
+		},
+		hasVersionUpdates(): boolean {
+			return (
+				this.settingsStore.settings.releaseChannel === 'stable' &&
+				this.versionsStore.hasVersionUpdates
+			);
+		},
+		nextVersions(): IVersion[] {
+			return this.versionsStore.nextVersions;
+		},
+		isCollapsed(): boolean {
+			return true;
+		},
+		canUserAccessSettings(): boolean {
+			const accessibleRoute = this.findFirstAccessibleSettingsRoute();
+			return accessibleRoute !== null;
+		},
+		showUserArea(): boolean {
+			return false;
+		},
+		workflowExecution(): IExecutionResponse | null {
+			return this.workflowsStore.getWorkflowExecution;
+		},
+		userMenuItems(): object[] {
+			return [
+				{
+					id: 'settings',
+					label: this.$locale.baseText('settings'),
+				},
+				{
+					id: 'logout',
+					label: this.$locale.baseText('auth.signout'),
+				},
+			];
+		},
+		mainMenuItems(): IMenuItem[] {
+			const items: IMenuItem[] = [];
+
+			const workflows: IMenuItem = {
+				id: 'workflows',
+				icon: 'network-wired',
+				label: this.$locale.baseText('mainSidebar.workflows'),
+				position: 'top',
+				route: { to: { name: VIEWS.WORKFLOWS } },
+				secondaryIcon: this.sourceControlStore.preferences.branchReadOnly
+					? {
+							name: 'lock',
+							tooltip: {
+								content: this.$locale.baseText('mainSidebar.workflows.readOnlyEnv.tooltip'),
+							},
+						}
+					: undefined,
+			};
+
+			const defaultSettingsRoute = this.findFirstAccessibleSettingsRoute();
+			const regularItems: IMenuItem[] = [
+				workflows,
+				{
+					id: 'credentials',
+					icon: 'key',
+					label: this.$locale.baseText('mainSidebar.credentials'),
+					customIconSize: 'medium',
+					position: 'top',
+					route: { to: { name: VIEWS.CREDENTIALS } },
+				},
+				{
+					id: 'executions',
+					icon: 'tasks',
+					label: this.$locale.baseText('mainSidebar.executions'),
+					position: 'top',
+					route: { to: { name: VIEWS.EXECUTIONS } },
+				},
+				{
+					id: 'cloud-admin',
+					position: 'bottom',
+					label: 'Admin Panel',
+					icon: 'home',
+					available: this.settingsStore.isCloudDeployment && hasPermission(['instanceOwner']),
+				}
+			];
+			return [...items, ...regularItems];
+		},
+		userIsTrialing(): boolean {
+			return this.cloudPlanStore.userIsTrialing;
+		},
+		currentPlanAndUsageData(): CloudPlanAndUsageData | null {
+			const planData = this.cloudPlanStore.currentPlanData;
+			const usage = this.cloudPlanStore.currentUsageData;
+			if (!planData || !usage) return null;
+			return {
+				...planData,
+				usage,
+			};
+		},
+	},
+	async mounted() {
+		this.basePath = this.rootStore.baseUrl;
+		if (this.$refs.user) {
+			void this.externalHooks.run('mainSidebar.mounted', {
+				userRef: this.$refs.user as Element,
+			});
+		}
+
+		void this.$nextTick(() => {
+			if (window.innerWidth < 900 || this.uiStore.isNodeView) {
+				this.uiStore.sidebarMenuCollapsed = true;
+			} else {
+				this.uiStore.sidebarMenuCollapsed = false;
+			}
+
+			this.fullyExpanded = !this.isCollapsed;
+		});
+
+		this.becomeTemplateCreatorStore.startMonitoringCta();
+	},
+	created() {
+		window.addEventListener('resize', this.onResize);
+	},
+	beforeUnmount() {
+		this.becomeTemplateCreatorStore.stopMonitoringCta();
+		window.removeEventListener('resize', this.onResize);
+	},
+	methods: {
+		trackHelpItemClick(itemType: string) {
+			this.$telemetry.track('User clicked help resource', {
+				type: itemType,
+				workflow_id: this.workflowsStore.workflowId,
+			});
+		},
+		trackTemplatesClick() {
+			this.$telemetry.track('User clicked on templates', {
+				role: this.usersStore.currentUserCloudInfo?.role,
+				active_workflow_count: this.workflowsStore.activeWorkflows.length,
+			});
+		},
+		async onUserActionToggle(action: string) {
+			switch (action) {
+				case 'logout':
+					this.onLogout();
+					break;
+				case 'settings':
+					void this.$router.push({ name: VIEWS.PERSONAL_SETTINGS });
+					break;
+				default:
+					break;
+			}
+		},
+		onLogout() {
+			void this.$router.push({ name: VIEWS.SIGNOUT });
+		},
+		toggleCollapse() {
+			this.uiStore.toggleSidebarMenuCollapse();
+			// When expanding, delay showing some element to ensure smooth animation
+			if (!this.isCollapsed) {
+				setTimeout(() => {
+					this.fullyExpanded = !this.isCollapsed;
+				}, 300);
+			} else {
+				this.fullyExpanded = !this.isCollapsed;
+			}
+		},
+		openUpdatesPanel() {
+			this.uiStore.openModal(VERSIONS_MODAL_KEY);
+		},
+		async handleSelect(key: string) {
+			switch (key) {
+				case 'templates':
+					if (
+						this.settingsStore.isTemplatesEnabled &&
+						!this.templatesStore.hasCustomTemplatesHost
+					) {
+						this.trackTemplatesClick();
+					}
+					break;
+				case 'about': {
+					this.trackHelpItemClick('about');
+					this.uiStore.openModal(ABOUT_MODAL_KEY);
+					break;
+				}
+				case 'cloud-admin': {
+					void this.cloudPlanStore.redirectToDashboard();
+					break;
+				}
+				case 'quickstart':
+				case 'docs':
+				case 'forum':
+				case 'examples': {
+					this.trackHelpItemClick(key);
+					break;
+				}
+				default:
+					break;
+			}
+		},
+		findFirstAccessibleSettingsRoute() {
+			const settingsRoutes = this.$router
+				.getRoutes()
+				.find((route) => route.path === '/settings')!
+				.children.map((route) => route.name ?? '');
+
+			let defaultSettingsRoute = { name: VIEWS.USERS_SETTINGS };
+			for (const route of settingsRoutes) {
+				if (this.canUserAccessRouteByName(route.toString())) {
+					defaultSettingsRoute = {
+						name: route.toString() as VIEWS,
+					};
+					break;
+				}
+			}
+
+			return defaultSettingsRoute;
+		},
+		onResize(event: UIEvent) {
+			void this.callDebounced(this.onResizeEnd, { debounceTime: 100 }, event);
+		},
+		async onResizeEnd(event: UIEvent) {
+			const browserWidth = (event.target as Window).outerWidth;
+			await this.checkWidthAndAdjustSidebar(browserWidth);
+		},
+		async checkWidthAndAdjustSidebar(width: number) {
+			if (width < 900) {
+				this.uiStore.sidebarMenuCollapsed = true;
+				await this.$nextTick();
+				this.fullyExpanded = !this.isCollapsed;
+			}
+		},
+	},
+});
+</script>
 
 <style lang="scss" module>
 .sideMenu {
